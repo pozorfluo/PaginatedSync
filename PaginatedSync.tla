@@ -1,11 +1,12 @@
 ----------------------------- MODULE PaginatedSync -----------------------------
-EXTENDS Naturals, FiniteSets, Functions
+EXTENDS Naturals, FiniteSets, Functions, Sequences, TLC
 
 --------------------------------------------------------------------------------
 set ++ e == set \union {e}
 set -- e == set \ {e}
 --------------------------------------------------------------------------------
-CONSTANT
+CONSTANTS
+  Null,
   MaxPageSize,
   MaxTimestamp
 
@@ -17,12 +18,14 @@ ASSUME
 
 VARIABLES
   clock,
+  log,
   pageSize,
   pulled,
-  synced
+  synced,
+  pullCursor
 
 vars ==
-  << clock, log, pageSize, pulled, synced >>
+  << clock, log, pageSize, pulled, synced, pullCursor >>
 
 --------------------------------------------------------------------------------
 Timestamps ==
@@ -30,51 +33,68 @@ Timestamps ==
 
 Items ==
   [created : Timestamps, modified : Timestamps]
+
+Cursors ==
+  [lastId : Timestamps, startedAt : Timestamps]
   
+ASSUME
+  /\ Null \notin Cursors
 --------------------------------------------------------------------------------
 (* Invariant. *)
 TypeInvariant ==
   /\ clock \in Nat
   /\ pageSize \in Nat
   /\ log \in SUBSET Items
-  /\ pull \in Seq(Items)
+  /\ pulled \in Seq(Items)
   /\ synced \in Seq(Items)
+  /\ pullCursor \in Cursors ++ Null
 
 Init ==
   /\ clock = (MaxTimestamp \div 2) + 1
   /\ pageSize \in 1..MaxPageSize
   /\ log = { [created |-> t, modified |-> t] : t \in 1..(MaxTimestamp \div 2) }
-  /\ pull = <<>>
+  /\ pulled = <<>>
   /\ synced = <<>>
-
-
+  /\ pullCursor = Null
 
 Create ==
   \* Exclude pointless Create before first pull.  
-  /\ pull # <<>>
+  /\ pulled # <<>>
   /\ clock <= MaxTimestamp
   /\ log' = log ++ [created |-> clock, modified |-> clock]
   /\ clock' = clock + 1
   /\ UNCHANGED << pageSize, pulled, synced >>
 
-Modify(id) ==
+\* Modify(id) ==
+Modify ==
   \* Exclude pointless Modify before first pull.  
-  /\ pull # <<>>
+  /\ pulled # <<>>
   /\ clock <= MaxTimestamp
-  /\ log' = { IF i.created = id THEN [created |-> id, modified |-> clock] ELSE i : i \in log }
-  /\ clock' = clock + 1
-  /\ UNCHANGED << pageSize, pulled, synced >>
-  
-Pull() ==
-  
-Sync() 
+  /\ \E id \in 1..(clock - 1) :
+    /\ log' = { IF i.created = id THEN [created |-> id, modified |-> clock] ELSE i : i \in log }
+    /\ clock' = clock + 1
+    /\ UNCHANGED << pageSize, pulled, synced >>
   
 
-(* Invariant. *)
-ItemsPulledInCreatedOrder ==
+SortByCreated(a, b) == a.created < b.created
+SortByModified(a, b) == a.modified < b.modified
 
-(* Invariant. *)
-ItemsSyncedInModifiedOrder ==
+(* Ideal cursor update that cannot fail for now. *)
+Pull ==
+  /\ LET
+       filtered == IF pullCursor = Null THEN log ELSE {i \in log : i.modified <= pullCursor.startedAt }
+       pulled == SetToSortSeq(filtered, SortByCreated)
+     IN
+  /\ UNCHANGED << pageSize, log, clock, synced >>
+  
+\* Sync() 
+  
+
+\* (* Invariant. *)
+\* ItemsPulledInCreatedOrder ==
+
+\* (* Invariant. *)
+\* ItemsSyncedInModifiedOrder ==
 
 (* 
   Invariant. 
@@ -111,10 +131,26 @@ Done ==
   /\ UNCHANGED vars
 
 Next ==
+  \* \/ Create
+  \* \/ \E i \in 1..(clock - 1) :
+  \*   \/ Modify(i)
+  \/ Modify
   \/ Done
 
 Spec ==
   /\ Init
   /\ [][Next]_vars
 
+--------------------------------------------------------------------------------
+THEOREM Spec => []TypeInvariant
+--------------------------------------------------------------------------------
+
+
 ================================================================================
+LET
+  s == << 2, 4, 1, 5 >>
+IN
+  SortSeq(
+    s,
+    LAMBDA a, b : a < b
+  )
