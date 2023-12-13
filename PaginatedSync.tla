@@ -1,5 +1,5 @@
 ----------------------------- MODULE PaginatedSync -----------------------------
-EXTENDS Naturals, FiniteSets, Functions, Sequences, TLC
+EXTENDS Naturals, FiniteSets, Functions, Sequences, TLC, SequencesExt, FiniteSetsExt
 
 --------------------------------------------------------------------------------
 set ++ e == set \union {e}
@@ -63,7 +63,7 @@ Create ==
   /\ clock <= MaxTimestamp
   /\ log' = log ++ [created |-> clock, modified |-> clock]
   /\ clock' = clock + 1
-  /\ UNCHANGED << pageSize, pulled, synced >>
+  /\ UNCHANGED << pageSize, pulled, synced, pullCursor>>
 
 \* Modify(id) ==
 Modify ==
@@ -73,7 +73,7 @@ Modify ==
   /\ \E id \in 1..(clock - 1) :
     /\ log' = { IF i.created = id THEN [created |-> id, modified |-> clock] ELSE i : i \in log }
     /\ clock' = clock + 1
-    /\ UNCHANGED << pageSize, pulled, synced >>
+    /\ UNCHANGED << pageSize, pulled, synced, pullCursor >>
   
 
 SortByCreated(a, b) == a.created < b.created
@@ -81,11 +81,26 @@ SortByModified(a, b) == a.modified < b.modified
 
 (* Ideal cursor update that cannot fail for now. *)
 Pull ==
-  /\ LET
-       filtered == IF pullCursor = Null THEN log ELSE {i \in log : i.modified <= pullCursor.startedAt }
-       pulled == SetToSortSeq(filtered, SortByCreated)
-     IN
-  /\ UNCHANGED << pageSize, log, clock, synced >>
+  \/ /\ pullCursor = Null
+     /\ LET
+          sorted == SetToSortSeq(log, SortByCreated)
+          length == Len(sorted)
+        IN
+         /\ length > 0
+         /\ pulled' = pulled \o SubSeq(sorted, 1, Min({pageSize, length}))
+         /\ pullCursor' = [lastId |-> Last(pulled').created, startedAt |-> clock]
+     /\ UNCHANGED << pageSize, log, clock, synced >>
+  \/ /\ pullCursor # Null
+     /\ LET
+          filtered == {i \in log : i.created > pullCursor.lastId /\ i.modified <= pullCursor.startedAt}
+          sorted == SetToSortSeq(filtered, SortByCreated)
+          length == Len(sorted)
+        IN
+          /\ length > 0
+          /\ pulled' = pulled \o SubSeq(sorted, 1, Min({pageSize, length}))
+          /\ pullCursor' = [pullCursor EXCEPT !.lastId = Last(pulled').created]
+          /\ UNCHANGED << pageSize, log, clock, synced >>
+  
   
 \* Sync() 
   
@@ -131,10 +146,11 @@ Done ==
   /\ UNCHANGED vars
 
 Next ==
-  \* \/ Create
+  \/ Create
   \* \/ \E i \in 1..(clock - 1) :
   \*   \/ Modify(i)
   \/ Modify
+  \/ Pull
   \/ Done
 
 Spec ==
