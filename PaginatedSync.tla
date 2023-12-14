@@ -22,10 +22,11 @@ VARIABLES
   pageSize,
   pulled,
   synced,
-  pullCursor
+  pullCursor,
+  syncCursor
 
 vars ==
-  << clock, log, pageSize, pulled, synced, pullCursor >>
+  << clock, log, pageSize, pulled, synced, pullCursor, syncCursor >>
 
 --------------------------------------------------------------------------------
 Timestamps ==
@@ -48,6 +49,7 @@ TypeInvariant ==
   /\ pulled \in Seq(Items)
   /\ synced \in Seq(Items)
   /\ pullCursor \in Cursors ++ Null
+  /\ syncCursor \in Cursors ++ Null
 
 Init ==
   /\ clock = (MaxTimestamp \div 2) + 1
@@ -56,6 +58,7 @@ Init ==
   /\ pulled = <<>>
   /\ synced = <<>>
   /\ pullCursor = Null
+  /\ syncCursor = Null
 
 Create ==
   \* Exclude pointless Create before first pull.  
@@ -63,7 +66,7 @@ Create ==
   /\ clock <= MaxTimestamp
   /\ log' = log ++ [created |-> clock, modified |-> clock]
   /\ clock' = clock + 1
-  /\ UNCHANGED << pageSize, pulled, synced, pullCursor>>
+  /\ UNCHANGED << pageSize, pulled, synced, pullCursor, syncCursor >>
 
 \* Modify(id) ==
 Modify ==
@@ -73,36 +76,54 @@ Modify ==
   /\ \E id \in 1..(clock - 1) :
     /\ log' = { IF i.created = id THEN [created |-> id, modified |-> clock] ELSE i : i \in log }
     /\ clock' = clock + 1
-    /\ UNCHANGED << pageSize, pulled, synced, pullCursor >>
+    /\ UNCHANGED << pageSize, pulled, synced, pullCursor, syncCursor >>
   
 
 SortByCreated(a, b) == a.created < b.created
-SortByModified(a, b) == a.modified < b.modified
+SortByModified(a, b) ==
+  a.modified < b.modified \/ (a.modified = b.modified /\ a.created < b.created)
 
 (* Ideal cursor update that cannot fail for now. *)
 Pull ==
-  \/ /\ pullCursor = Null
-     /\ LET
-          sorted == SetToSortSeq(log, SortByCreated)
-          length == Len(sorted)
-        IN
-         /\ length > 0
-         /\ pulled' = pulled \o SubSeq(sorted, 1, Min({pageSize, length}))
-         /\ pullCursor' = [lastId |-> Last(pulled').created, startedAt |-> clock]
-     /\ UNCHANGED << pageSize, log, clock, synced >>
-  \/ /\ pullCursor # Null
-     /\ LET
-          filtered == {i \in log : i.created > pullCursor.lastId /\ i.modified <= pullCursor.startedAt}
-          sorted == SetToSortSeq(filtered, SortByCreated)
-          length == Len(sorted)
-        IN
-          /\ length > 0
-          /\ pulled' = pulled \o SubSeq(sorted, 1, Min({pageSize, length}))
-          /\ pullCursor' = [pullCursor EXCEPT !.lastId = Last(pulled').created]
-          /\ UNCHANGED << pageSize, log, clock, synced >>
+  /\ syncCursor = Null
+  /\ \/ /\ pullCursor = Null
+        /\ LET
+              sorted == SetToSortSeq(log, SortByCreated)
+              length == Len(sorted)
+            IN
+              \/ /\ length > 0
+                 /\ pulled' = pulled \o SubSeq(sorted, 1, Min({pageSize, length}))
+                 /\ pullCursor' = [lastId |-> Last(pulled').created, startedAt |-> clock]
+                 /\ UNCHANGED << pageSize, log, clock, synced, syncCursor >>
+              \/ /\ length = 0
+                 /\ syncCursor' = pullCursor
+                 /\ UNCHANGED << pageSize, log, clock, synced, pulled, pullCursor >>
+     \/ /\ pullCursor # Null
+        /\ LET
+              filtered == {i \in log : i.created > pullCursor.lastId /\ i.modified <= pullCursor.startedAt}
+              sorted == SetToSortSeq(filtered, SortByCreated)
+              length == Len(sorted)
+            IN
+              \/ /\ length > 0
+                 /\ pulled' = pulled \o SubSeq(sorted, 1, Min({pageSize, length}))
+                 /\ pullCursor' = [pullCursor EXCEPT !.lastId = Last(pulled').created]
+                 /\ UNCHANGED << pageSize, log, clock, synced, syncCursor >>
+              \/ /\ length = 0
+                 /\ syncCursor' = pullCursor
+                 /\ UNCHANGED << pageSize, log, clock, synced, pulled, pullCursor >>
   
-  
-\* Sync() 
+(* Ideal cursor update that cannot fail for now. *)
+Sync ==
+  /\ syncCursor # Null
+  /\ LET
+       filtered == {i \in log : i.modified > syncCursor.startedAt}
+       sorted == SetToSortSeq(filtered, SortByModified)
+       length == Len(sorted)
+     IN
+       /\ synced' = synced \o sorted \* Temp to get started.
+       /\ syncCursor' = syncCursor \* @todo.
+       /\ UNCHANGED << pageSize, log, clock, pulled, pullCursor >>
+
   
 
 \* (* Invariant. *)
@@ -151,6 +172,7 @@ Next ==
   \*   \/ Modify(i)
   \/ Modify
   \/ Pull
+  \/ Sync
   \/ Done
 
 Spec ==
@@ -170,3 +192,9 @@ IN
     s,
     LAMBDA a, b : a < b
   )
+
+LET
+  a == {3, 4, 5, 6}
+  b == {4, 6}
+IN
+  a \subseteq b 
