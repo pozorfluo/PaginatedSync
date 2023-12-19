@@ -57,7 +57,8 @@ TypeInvariant ==
 
 Init ==
   /\ clock = (MaxTimestamp \div 2) + 1
-  /\ pageSize \in 1..MaxPageSize
+  \* /\ pageSize \in 1..MaxPageSize
+  /\ pageSize = MaxPageSize
   /\ log = { [created |-> t, modified |-> t] : t \in 1..(MaxTimestamp \div 2) }
   /\ pulled = <<>>
   /\ synced = <<>>
@@ -130,14 +131,6 @@ Sync ==
        /\ syncCursor' = [lastId |-> Last(synced').created, lastModified |-> Last(synced').modified]
        /\ UNCHANGED << pageSize, log, clock, pulled, pullCursor >>
 
-  
-
-\* (* Invariant. *)
-\* ItemsPulledInCreatedOrder ==
-
-\* (* Invariant. *)
-\* ItemsSyncedInModifiedOrder ==
-
 (* 
   Invariant. 
 
@@ -151,13 +144,15 @@ NoDuplicates ==
 
 (* Invariant.  *)
 PulledInOrder ==
-  /\ \A a, b \in DOMAIN pulled :
-    (a # b /\ a > b) => pulled[a].created > pulled[b].created
+  pulled = SortSeq(pulled, SortByCreated)
+  \* /\ \A a, b \in DOMAIN pulled :
+  \*   (a # b /\ a > b) => pulled[a].created > pulled[b].created
 
 (* Invariant.  *)
 SyncedInOrder ==
-  /\ \A a, b \in DOMAIN synced :
-    (a # b /\ a > b) => synced[a].modified > synced[b].modified
+  synced = SortSeq(synced, SortByModified)
+  \* /\ \A a, b \in DOMAIN synced :
+  \*   (a # b /\ a > b) => synced[a].modified > synced[b].modified
     
 
 (* *)
@@ -191,9 +186,7 @@ Spec ==
 THEOREM Spec => []TypeInvariant
 --------------------------------------------------------------------------------
 
-(*
-  @todo Revisit simulation mode ? 
-*)
+(* *)
 FailOnDone ==
   ~(
     /\ ENABLED Done
@@ -217,3 +210,19 @@ LET
   b == {4, 6}
 IN
   a \subseteq b 
+
+
+LET
+  S2 == {4, 6}
+  Permutations2(S) == 
+    {f \in [S -> S] : \A w \in S : \E v \in S : f[v]=w}
+
+  SortSeq2(s, Op(_, _)) ==
+      LET Perm == CHOOSE p \in Permutations2(1 .. Len(s)) :
+                    \A i, j \in 1..Len(s) : 
+                      (i < j) => Op(s[p[i]], s[p[j]]) \/ (s[p[i]] = s[p[j]])
+      IN  [i \in 1..Len(s) |-> s[Perm[i]]]
+
+IN
+  [S2 -> S2]
+  Permutations2(S)

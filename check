@@ -1,0 +1,21 @@
+java -cp ./lib/CommunityModules-deps-202303072243.jar:/Users/spagbol/.vscode/extensions/alygin.vscode-tlaplus-nightly-2023.12.1906/tools/tla2tools.jar \
+     -XX:+UseParallelGC \
+     tlc2.TLC $1 \
+     -coverage 99999 \
+     -checkpoint 0 \
+     -workers 4 \
+     -fpmem 0.8 \
+     -cleanup \
+     -lncheck final \
+     -simulate file=sim.trace,num=1
+    # $options \
+     # -dfid 10 \
+     # -debug \
+     # -tool \s
+
+
+# Simulation args can be:
+# file=/path/to/file,num=4711 or num=4711,file=/path/to/file or num=4711 or
+# file=/path/to/file
+# "file=..." and "num=..." are only relevant for simulation which is why they
+# are args to "-simulate".
